@@ -266,34 +266,67 @@ def display_x509_cert(cert):
     for i in range(0, len(sig_parts), 16):
         print(" "*8 + ":".join(sig_parts[i:i+16]))
 
+def openssl_to_cryptography_cert(cert):
+    backend = cryptography.hazmat.backends.default_backend()
+    buff = OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_ASN1, cert)
+    return load_der_x509_certificate(buff, backend)
+
 def display_pkcs7(bundle):
-    print(repr(bundle))
+
+    # This function was modified from this PR to the pyopenssl project
+    # https://github.com/pyca/pyopenssl/pull/367/files
+    def get_certificates(bundle):
+        from OpenSSL._util import (
+            ffi as _ffi,
+            lib as _lib
+        )
+        from OpenSSL.crypto import X509
+
+        certs = _ffi.NULL
+        if bundle.type_is_signed():
+            certs = bundle._pkcs7.d.sign.cert
+        elif bundle.type_is_signedAndEnveloped():
+            certs = bundle._pkcs7.d.signed_and_enveloped.cert
+
+        pycerts = []
+        for i in range(_lib.sk_X509_num(certs)):
+            pycert = X509.__new__(X509)
+            pycert._x509 = _ffi.gc(_lib.X509_dup(_lib.sk_X509_value(certs, i)), _lib.X509_free)
+            pycerts.append(pycert)
+        if not pycerts:
+            return None
+        return tuple(pycerts)
+
+    certs = get_certificates(bundle)
+    for cert in certs:
+        display_x509_cert(openssl_to_cryptography_cert(cert))
 
 def display_pkcs12(bundle):
     backend = cryptography.hazmat.backends.default_backend()
     ca_certs = bundle.get_ca_certificates()
     if ca_certs is not None:
-        for ca_cert in ca_certs:
-            buff = OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_ASN1, ca_cert)
-            cert = load_der_x509_certificate(buff, backend)
-            display_x509_cert(cert)
+        for i, ca_cert in enumerate(ca_certs):
+            print("#######[ CA Certificate {} ]#######".format(i))
+            display_x509_cert(openssl_to_cryptography_cert(ca_cert))
 
     cert = bundle.get_certificate()
     if cert is not None:
-        buff = OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_ASN1, cert)
-        cert = load_der_x509_certificate(buff, backend)
-        display_x509_cert(cert)
+        print("#######[ Certificate ]#######")
+        display_x509_cert(openssl_to_cryptography_cert(cert))
 
     pkey = bundle.get_privatekey()
     if pkey is not None:
+        print("#######[ Private Key ]#######")
         pkey = pkey.to_cryptography_key()
         display_private_key(pkey)
 
 
-def display_file_info(filename):
+def display_file_info(filename, print_filename=False):
     backend = cryptography.hazmat.backends.default_backend()
     buffer = open(filename, "rb").read()
-    print(filename)
+
+    if print_filename is True:
+        print("#######[ {} ]#######".format(filename))
 
     # PKCS#1/PKCS#8 private in DER
     try:
@@ -399,7 +432,8 @@ def display_file_info(filename):
 
 def display_info(args):
     for file in args["<file>"]:
-        display_file_info(file)
+        display_file_info(file, print_filename=len(args["<file>"]) > 1)
+        print()
 
 def main():
     arguments = docopt(__doc__, version='CutKey')
