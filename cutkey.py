@@ -2,6 +2,7 @@
 
 Usage:
   cutkey info <file>...
+  cutkey graph <file>...
   cutkey (-h | --help)
   cutkey --version
 
@@ -271,33 +272,34 @@ def openssl_to_cryptography_cert(cert):
     buff = OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_ASN1, cert)
     return load_der_x509_certificate(buff, backend)
 
+
+# This function was modified from this PR to the pyopenssl project
+# https://github.com/pyca/pyopenssl/pull/367/files
+def get_pkcs7_certificates(bundle):
+    from OpenSSL._util import (
+        ffi as _ffi,
+        lib as _lib
+    )
+    from OpenSSL.crypto import X509
+
+    certs = _ffi.NULL
+    if bundle.type_is_signed():
+        certs = bundle._pkcs7.d.sign.cert
+    elif bundle.type_is_signedAndEnveloped():
+        certs = bundle._pkcs7.d.signed_and_enveloped.cert
+
+    pycerts = []
+    for i in range(_lib.sk_X509_num(certs)):
+        pycert = X509.__new__(X509)
+        pycert._x509 = _ffi.gc(_lib.X509_dup(_lib.sk_X509_value(certs, i)), _lib.X509_free)
+        pycerts.append(pycert)
+    if not pycerts:
+        return tuple()
+    return tuple(pycerts)
+
+
 def display_pkcs7(bundle):
-
-    # This function was modified from this PR to the pyopenssl project
-    # https://github.com/pyca/pyopenssl/pull/367/files
-    def get_certificates(bundle):
-        from OpenSSL._util import (
-            ffi as _ffi,
-            lib as _lib
-        )
-        from OpenSSL.crypto import X509
-
-        certs = _ffi.NULL
-        if bundle.type_is_signed():
-            certs = bundle._pkcs7.d.sign.cert
-        elif bundle.type_is_signedAndEnveloped():
-            certs = bundle._pkcs7.d.signed_and_enveloped.cert
-
-        pycerts = []
-        for i in range(_lib.sk_X509_num(certs)):
-            pycert = X509.__new__(X509)
-            pycert._x509 = _ffi.gc(_lib.X509_dup(_lib.sk_X509_value(certs, i)), _lib.X509_free)
-            pycerts.append(pycert)
-        if not pycerts:
-            return None
-        return tuple(pycerts)
-
-    certs = get_certificates(bundle)
+    certs = get_pkcs7_certificates(bundle)
     for cert in certs:
         display_x509_cert(openssl_to_cryptography_cert(cert))
 
@@ -320,110 +322,81 @@ def display_pkcs12(bundle):
         pkey = pkey.to_cryptography_key()
         display_private_key(pkey)
 
-
-def display_file_info(filename, print_filename=False):
-    backend = cryptography.hazmat.backends.default_backend()
-    buffer = open(filename, "rb").read()
-
+def display_item_info(item, print_filename=False):
     if print_filename is True:
         print("#######[ {} ]#######".format(filename))
 
+    if (isinstance(item, rsa.RSAPrivateKey) or
+        isinstance(item, dsa.DSAPrivateKey) or
+        isinstance(item, ec.EllipticCurvePrivateKey)):
+        display_private_key(item)
+
+    elif (isinstance(item, rsa.RSAPublicKey) or
+          isinstance(item, dsa.DSAPublicKey) or
+          isinstance(item, ec.EllipticCurvePublicKey)):
+        display_public_key(item)
+
+    elif isinstance(item, OpenSSL.crypto.PKCS12):
+        display_pkcs12(item)
+
+    elif isinstance(item, OpenSSL.crypto.PKCS7):
+        display_pkcs7(item)
+
+def load_file(filename):
+    backend = cryptography.hazmat.backends.default_backend()
+    buffer = open(filename, "rb").read()
+
     # PKCS#1/PKCS#8 private in DER
     try:
-        key = cryptography.hazmat.primitives.serialization.load_der_private_key(buffer, password=None, backend=backend)
-        try:
-            display_private_key(key)
-        except Exception:
-            traceback.print_exc()
-        return
+        return cryptography.hazmat.primitives.serialization.load_der_private_key(buffer, password=None, backend=backend)
     except:
         pass
 
     # PKCS#1/PKCS#8 private in PEM
     try:
-        key = cryptography.hazmat.primitives.serialization.load_pem_private_key(buffer, password=None, backend=backend)
-        try:
-            display_private_key(key)
-        except Exception:
-            traceback.print_exc()
-        return
+        return cryptography.hazmat.primitives.serialization.load_pem_private_key(buffer, password=None, backend=backend)
     except:
         pass
 
     # PKCS#1/PKCS#8 public in DER
     try:
-        key = cryptography.hazmat.primitives.serialization.load_der_public_key(buffer, backend)
-        try:
-            display_public_key(key)
-        except Exception:
-            traceback.print_exc()
-        return
+        return cryptography.hazmat.primitives.serialization.load_der_public_key(buffer, backend)
     except:
         pass
 
     # PKCS#1/PKCS#8 public in PEM
     try:
-        key = cryptography.hazmat.primitives.serialization.load_pem_public_key(buffer, backend)
-        try:
-            display_public_key(key)
-        except Exception:
-            traceback.print_exc()
-        return
+        return cryptography.hazmat.primitives.serialization.load_pem_public_key(buffer, backend)
     except:
         pass
 
     # X509 certificate in PEM
     try:
-        cert = load_pem_x509_certificate(buffer, backend)
-        try:
-            display_x509_cert(cert)
-        except Exception:
-            traceback.print_exc()
-        return
+        return load_pem_x509_certificate(buffer, backend)
     except:
         pass
 
     # X509 certificate in DER
     try:
-        cert = load_der_x509_certificate(buffer, backend)
-        try:
-            display_x509_cert(cert)
-        except Exception:
-            traceback.print_exc()
-        return
+        return load_der_x509_certificate(buffer, backend)
     except:
         pass
 
     # PKCS7 certificate bundle in PEM
     try:
-        bundle = OpenSSL.crypto.load_pkcs7_data(OpenSSL.crypto.FILETYPE_PEM, buffer)
-        try:
-            display_pkcs7(bundle)
-        except Exception:
-            traceback.print_exc()
-        return
+        return OpenSSL.crypto.load_pkcs7_data(OpenSSL.crypto.FILETYPE_PEM, buffer)
     except:
         pass
 
     # PKCS7 certificate bundle in DER
     try:
-        bundle = OpenSSL.crypto.load_pkcs7_data(OpenSSL.crypto.FILETYPE_ASN1, buffer)
-        try:
-            display_pkcs7(bundle)
-        except Exception:
-            traceback.print_exc()
-        return
+        return OpenSSL.crypto.load_pkcs7_data(OpenSSL.crypto.FILETYPE_ASN1, buffer)
     except:
         pass
 
     # PKCS12 bundle (binary)
     try:
-        bundle = OpenSSL.crypto.load_pkcs12(buffer)
-        try:
-            display_pkcs12(bundle)
-        except Exception:
-            traceback.print_exc()
-        return
+        return OpenSSL.crypto.load_pkcs12(buffer)
     except:
         pass
 
@@ -432,14 +405,77 @@ def display_file_info(filename, print_filename=False):
 
 def display_info(args):
     for file in args["<file>"]:
-        display_file_info(file, print_filename=len(args["<file>"]) > 1)
-        print()
+        item = load_file(file)
+        display_item_info(item, print_filename=len(args["<file>"]) > 1)
+
+def find_cert_chains(item_mapping):
+    certs = set([])
+    for items in item_mapping.values():
+        for item in items:
+            if isinstance(item, Certificate):
+                certs.add(item)
+
+    def is_root(cert, certs):
+        ''' A root is either self-signed or has no issuer in the given set
+        '''
+        if cert.issuer == cert.subject:
+            return True
+        for other in certs:
+            if other.subject == cert.issuer:
+                return False
+        return True
+
+    def get_children(parent, certs):
+        children = {}
+        for cert in certs:
+            if cert.issuer == parent.subject:
+                children[cert] = get_children(cert, certs)
+        return children
+
+    children = set([c for c in certs if not is_root(c, certs)])
+    roots = {
+        cert : get_children(cert, children) for cert in certs if is_root(cert, certs)
+    }
+
+    return roots
+
+def display_graph(args):
+    item_mapping = {}
+    for file in args["<file>"]:
+        item = load_file(file)
+        item_mapping[file] = []
+
+        if isinstance(item, OpenSSL.crypto.PKCS12):
+            ca_certs = item.get_ca_certificates()
+            if ca_certs is not None:
+                for i, ca_cert in enumerate(ca_certs):
+                    item_mapping[file].append(openssl_to_cryptography_cert(ca_cert))
+
+            cert = item.get_certificate()
+            if cert is not None:
+                item_mapping[file].append(openssl_to_cryptography_cert(cert))
+
+            pkey = item.get_privatekey()
+            if pkey is not None:
+                item_mapping[file].append(pkey.to_cryptography_key())
+        elif isinstance(item, OpenSSL.crypto.PKCS7):
+            for cert in get_pkcs7_certificates(item):
+                item_mapping[file].append(openssl_to_cryptography_cert(cert))
+        else:
+            item_mapping[file] = [item]
+
+    chains = find_cert_chains(item_mapping)
+    from pprint import pprint
+    pprint(chains)
+
 
 def main():
     arguments = docopt(__doc__, version='CutKey')
 
     if arguments["info"] is True:
         display_info(arguments)
+    elif arguments["graph"] is True:
+        display_graph(arguments)
 
 if __name__ == '__main__':
     main()
