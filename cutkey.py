@@ -443,15 +443,13 @@ def find_cert_trees(item_mapping):
 
 def display_graph(args):
     from cryptography.x509.oid import NameOID
-    from itertools import permutations
+    from itertools import product
     import graphviz
 
     graph = graphviz.Digraph(format='png')
-    item_mapping = {}
+    items = []
     for i, file in enumerate(args["<file>"]):
         item = load_file(file)
-        item_mapping[file] = []
-
         subgraph = graphviz.Digraph(name="cluster_{}".format(i))
 
         if isinstance(item, OpenSSL.crypto.PKCS12):
@@ -459,28 +457,30 @@ def display_graph(args):
             if ca_certs is not None:
                 for i, ca_cert in enumerate(ca_certs):
                     ca_cert = openssl_to_cryptography_cert(ca_cert)
-                    item_mapping[file].append(ca_cert)
+                    items.append(ca_cert)
                     subgraph.node(str(id(ca_cert)), label=
                                   ca_cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
 
             cert = item.get_certificate()
             if cert is not None:
                 cert = openssl_to_cryptography_cert(cert)
-                item_mapping[file].append(cert)
+                items.append(cert)
                 subgraph.node(str(id(cert)), label=
                               cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
 
             pkey = item.get_privatekey()
             if pkey is not None:
-                item_mapping[file].append(pkey.to_cryptography_key())
+                pkey = pkey.to_cryptography_key()
+                subgraph.node(str(id(pkey)), label="Private Key")
+                items.append(pkey)
         elif isinstance(item, OpenSSL.crypto.PKCS7):
             for cert in get_pkcs7_certificates(item):
                 cert = openssl_to_cryptography_cert(cert)
-                item_mapping[file].append(cert)
+                items.append(cert)
                 subgraph.node(str(id(cert)), label=
                               cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
         else:
-            item_mapping[file] = [item]
+            items.append(item)
             if isinstance(item, Certificate):
                 subgraph.node(str(id(item)), label=
                               item.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
@@ -499,28 +499,59 @@ def display_graph(args):
 
         graph.subgraph(subgraph)
 
-    cert_trees = find_cert_trees(item_mapping)
+    def is_same_public_key(pub1, pub2):
+        if (isinstance(pub1, rsa.RSAPublicKey) and
+            isinstance(pub2, rsa.RSAPublicKey)):
+            return pub1.public_numbers().n == pub2.public_numbers().n
+        elif (isinstance(pub1, dsa.DSAPublicKey) and
+              isinstance(pub2, dsa.DSAPublicKey)):
+            return pub1.public_numbers().y == pub2.public_numbers().y
+        elif (isinstance(pub1, ec.EllipticCurvePublicKey) and
+              isinstance(pub2, ec.EllipticCurvePublicKey)):
+            return (pub1.public_numbers().x == pub2.public_numbers().x and
+                    pub1.public_numbers().y == pub2.public_numbers().y)
+        return False
 
-    def connect_certs(digraph, node, children):
-        for child, grandchildren in children.items():
-            connect_certs(digraph, child, grandchildren)
-            digraph.edge(str(id(node)), str(id(child)))
+    def is_private_key_for_public_key(priv, pub):
+        # RSA Private key for public key
+        if (isinstance(priv, rsa.RSAPrivateKey) and
+            isinstance(pub, rsa.RSAPublicKey) and
+            is_same_public_key(priv.public_key(), pub)):
+            return True
 
-    for k, v in cert_trees.items():
-        connect_certs(graph, k, v)
+        # DSA Private key for public key
+        if (isinstance(priv, dsa.DSAPrivateKey) and
+            isinstance(pub, dsa.DSAPublicKey) and
+            is_same_public_key(priv.public_key(), pub)):
+            return True
 
-    items = [item for l in item_mapping.values() for item in l]
+        # EC Private key for public key
+        if (isinstance(priv, ec.EllipticCurvePrivateKey) and
+            isinstance(pub, ec.EllipticCurvePublicKey) and
+            is_same_public_key(priv.public_key(), pub)):
+            return True
+        return False
 
-    for item, other in permutations(items, 2):
-        if (isinstance(item, rsa.RSAPublicKey) and
-            isinstance(other, rsa.RSAPrivateKey)):
-            if other.public_key() == item:
-                graph.edge(str(id(item)), str(id(other)))
+    for item, other in product(items, repeat=2):
+        # Associated public and private keys
+        if is_private_key_for_public_key(item, other):
+            graph.edge(str(id(item)), str(id(other)))
+
+        # Associated certificate and public key
         elif (isinstance(item, Certificate) and
-              isinstance(item.public_key(), rsa.RSAPublicKey) and
-              isinstance(other, rsa.RSAPrivateKey)):
-            if item.public_key().public_numbers().n == item.public_key().public_numbers().n:
-                graph.edge(str(id(item)), str(id(other)))
+              is_same_public_key(item.public_key(), other)):
+            graph.edge(str(id(item)), str(id(other)))
+
+        # Associated certificate and private key
+        elif (isinstance(other, Certificate) and
+              is_private_key_for_public_key(item, other.public_key())):
+            graph.edge(str(id(item)), str(id(other)))
+
+        # Certs in the same chain
+        if (isinstance(item, Certificate) and
+            isinstance(other, Certificate) and
+            other.issuer == item.subject):
+            graph.edge(str(id(item)), str(id(other)))
 
     print(graph.source)
     graph.render('temp.gv', view=True)
