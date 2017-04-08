@@ -408,7 +408,7 @@ def display_info(args):
         item = load_file(file)
         display_item_info(item, print_filename=len(args["<file>"]) > 1)
 
-def find_cert_chains(item_mapping):
+def find_cert_trees(item_mapping):
     certs = set([])
     for items in item_mapping.values():
         for item in items:
@@ -434,39 +434,96 @@ def find_cert_chains(item_mapping):
 
     children = set([c for c in certs if not is_root(c, certs)])
     roots = {
-        cert : get_children(cert, children) for cert in certs if is_root(cert, certs)
+        cert : get_children(cert, children)
+        for cert in certs if is_root(cert, certs)
     }
 
     return roots
 
+
 def display_graph(args):
+    from cryptography.x509.oid import NameOID
+    from itertools import permutations
+    import graphviz
+
+    graph = graphviz.Digraph(format='png')
     item_mapping = {}
-    for file in args["<file>"]:
+    for i, file in enumerate(args["<file>"]):
         item = load_file(file)
         item_mapping[file] = []
+
+        subgraph = graphviz.Digraph(name="cluster_{}".format(i))
 
         if isinstance(item, OpenSSL.crypto.PKCS12):
             ca_certs = item.get_ca_certificates()
             if ca_certs is not None:
                 for i, ca_cert in enumerate(ca_certs):
-                    item_mapping[file].append(openssl_to_cryptography_cert(ca_cert))
+                    ca_cert = openssl_to_cryptography_cert(ca_cert)
+                    item_mapping[file].append(ca_cert)
+                    subgraph.node(str(id(ca_cert)), label=
+                                  ca_cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
 
             cert = item.get_certificate()
             if cert is not None:
-                item_mapping[file].append(openssl_to_cryptography_cert(cert))
+                cert = openssl_to_cryptography_cert(cert)
+                item_mapping[file].append(cert)
+                subgraph.node(str(id(cert)), label=
+                              cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
 
             pkey = item.get_privatekey()
             if pkey is not None:
                 item_mapping[file].append(pkey.to_cryptography_key())
         elif isinstance(item, OpenSSL.crypto.PKCS7):
             for cert in get_pkcs7_certificates(item):
-                item_mapping[file].append(openssl_to_cryptography_cert(cert))
+                cert = openssl_to_cryptography_cert(cert)
+                item_mapping[file].append(cert)
+                subgraph.node(str(id(cert)), label=
+                              cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
         else:
             item_mapping[file] = [item]
+            if isinstance(item, Certificate):
+                subgraph.node(str(id(item)), label=
+                              item.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
+            elif (isinstance(item, rsa.RSAPrivateKey) or
+                  isinstance(item, dsa.DSAPrivateKey) or
+                  isinstance(item, ec.EllipticCurvePrivateKey)):
+                subgraph.node(str(id(item)), label="Private Key")
 
-    chains = find_cert_chains(item_mapping)
-    from pprint import pprint
-    pprint(chains)
+            elif (isinstance(item, rsa.RSAPublicKey) or
+                  isinstance(item, dsa.DSAPublicKey) or
+                  isinstance(item, ec.EllipticCurvePublicKey)):
+                subgraph.node(str(id(item)), label="Public Key")
+
+        #FIXME: this is a hack
+        subgraph.body.append('label="{}"'.format(file))
+
+        graph.subgraph(subgraph)
+
+    cert_trees = find_cert_trees(item_mapping)
+
+    def connect_certs(digraph, node, children):
+        for child, grandchildren in children.items():
+            connect_certs(digraph, child, grandchildren)
+            digraph.edge(str(id(node)), str(id(child)))
+
+    for k, v in cert_trees.items():
+        connect_certs(graph, k, v)
+
+    items = [item for l in item_mapping.values() for item in l]
+
+    for item, other in permutations(items, 2):
+        if (isinstance(item, rsa.RSAPublicKey) and
+            isinstance(other, rsa.RSAPrivateKey)):
+            if other.public_key() == item:
+                graph.edge(str(id(item)), str(id(other)))
+        elif (isinstance(item, Certificate) and
+              isinstance(item.public_key(), rsa.RSAPublicKey) and
+              isinstance(other, rsa.RSAPrivateKey)):
+            if item.public_key().public_numbers().n == item.public_key().public_numbers().n:
+                graph.edge(str(id(item)), str(id(other)))
+
+    print(graph.source)
+    graph.render('temp.gv', view=True)
 
 
 def main():
