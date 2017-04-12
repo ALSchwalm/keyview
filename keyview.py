@@ -342,19 +342,32 @@ def display_item_info(item, print_filename=False):
     elif isinstance(item, OpenSSL.crypto.PKCS7):
         display_pkcs7(item)
 
+    elif isinstance(item, Certificate):
+        display_x509_cert(item)
+
+
 def load_file(filename):
-    backend = cryptography.hazmat.backends.default_backend()
+    import re
+
     buffer = open(filename, "rb").read()
+    pem_expr = rb'-----BEGIN [A-Za-z0-9 ]+-----[A-Za-z0-9/+=\r\n]+?-----END [A-Za-z0-9 ]+-----'
+    items = []
+    for m in re.finditer(pem_expr, buffer, re.MULTILINE):
+        items.append(load_pem_file_item(m.group(0)))
+
+    try:
+        items.append(load_binary_item(buffer))
+    except:
+        if len(items) == 0:
+            raise Exception("Unknown file type for: {}".format(filename))
+    return items
+
+def load_binary_item(buffer):
+    backend = cryptography.hazmat.backends.default_backend()
 
     # PKCS#1/PKCS#8 private in DER
     try:
         return cryptography.hazmat.primitives.serialization.load_der_private_key(buffer, password=None, backend=backend)
-    except:
-        pass
-
-    # PKCS#1/PKCS#8 private in PEM
-    try:
-        return cryptography.hazmat.primitives.serialization.load_pem_private_key(buffer, password=None, backend=backend)
     except:
         pass
 
@@ -364,27 +377,9 @@ def load_file(filename):
     except:
         pass
 
-    # PKCS#1/PKCS#8 public in PEM
-    try:
-        return cryptography.hazmat.primitives.serialization.load_pem_public_key(buffer, backend)
-    except:
-        pass
-
-    # X509 certificate in PEM
-    try:
-        return load_pem_x509_certificate(buffer, backend)
-    except:
-        pass
-
     # X509 certificate in DER
     try:
         return load_der_x509_certificate(buffer, backend)
-    except:
-        pass
-
-    # PKCS7 certificate bundle in PEM
-    try:
-        return OpenSSL.crypto.load_pkcs7_data(OpenSSL.crypto.FILETYPE_PEM, buffer)
     except:
         pass
 
@@ -400,13 +395,43 @@ def load_file(filename):
     except:
         pass
 
-    raise Exception("Unknown file type: {}".format(filename))
+    raise Exception("Unknown file type for: {}".format(buffer))
+
+def load_pem_file_item(buffer):
+    backend = cryptography.hazmat.backends.default_backend()
+
+    # PKCS#1/PKCS#8 private in PEM
+    try:
+        return cryptography.hazmat.primitives.serialization.load_pem_private_key(buffer, password=None, backend=backend)
+    except:
+        pass
+
+    # PKCS#1/PKCS#8 public in PEM
+    try:
+        return cryptography.hazmat.primitives.serialization.load_pem_public_key(buffer, backend)
+    except:
+        pass
+
+    # X509 certificate in PEM
+    try:
+        return load_pem_x509_certificate(buffer, backend)
+    except:
+        pass
+
+    # PKCS7 certificate bundle in PEM
+    try:
+        return OpenSSL.crypto.load_pkcs7_data(OpenSSL.crypto.FILETYPE_PEM, buffer)
+    except:
+        pass
+
+    raise Exception("Unknown file type for: {}".format(buffer))
 
 
 def display_info(args):
     for file in args["<file>"]:
-        item = load_file(file)
-        display_item_info(item, print_filename=len(args["<file>"]) > 1)
+        items = load_file(file)
+        for item in items:
+            display_item_info(item, print_filename=len(args["<file>"]) > 1)
 
 def find_cert_trees(item_mapping):
     certs = set([])
@@ -479,50 +504,50 @@ def display_graph(args):
     graph = graphviz.Digraph(format='png')
     items = []
     for i, file in enumerate(args["<file>"]):
-        item = load_file(file)
+        file_items = load_file(file)
         subgraph = graphviz.Digraph(name="cluster_{}".format(i))
 
-        if isinstance(item, OpenSSL.crypto.PKCS12):
-            ca_certs = item.get_ca_certificates()
-            if ca_certs is not None:
-                for i, ca_cert in enumerate(ca_certs):
-                    ca_cert = openssl_to_cryptography_cert(ca_cert)
-                    items.append(ca_cert)
-                    subgraph.node(str(id(ca_cert)), label=
-                                  ca_cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
+        for item in file_items:
+            if isinstance(item, OpenSSL.crypto.PKCS12):
+                ca_certs = item.get_ca_certificates()
+                if ca_certs is not None:
+                    for i, ca_cert in enumerate(ca_certs):
+                        ca_cert = openssl_to_cryptography_cert(ca_cert)
+                        items.append(ca_cert)
+                        subgraph.node(str(id(ca_cert)), label=
+                                      ca_cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
 
-            cert = item.get_certificate()
-            if cert is not None:
-                cert = openssl_to_cryptography_cert(cert)
-                items.append(cert)
-                subgraph.node(str(id(cert)), label=
-                              cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
+                cert = item.get_certificate()
+                if cert is not None:
+                    cert = openssl_to_cryptography_cert(cert)
+                    items.append(cert)
+                    subgraph.node(str(id(cert)), label=
+                                  cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
 
-            pkey = item.get_privatekey()
-            if pkey is not None:
-                pkey = pkey.to_cryptography_key()
-                subgraph.node(str(id(pkey)), label=get_private_key_label(pkey))
-                items.append(pkey)
-        elif isinstance(item, OpenSSL.crypto.PKCS7):
-            for cert in get_pkcs7_certificates(item):
-                cert = openssl_to_cryptography_cert(cert)
-                items.append(cert)
-                subgraph.node(str(id(cert)), label=
-                              cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
-        else:
-            items.append(item)
-            if isinstance(item, Certificate):
-                subgraph.node(str(id(item)), label=
-                              item.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
-            elif (isinstance(item, rsa.RSAPrivateKey) or
-                  isinstance(item, dsa.DSAPrivateKey) or
-                  isinstance(item, ec.EllipticCurvePrivateKey)):
-                subgraph.node(str(id(item)), label=get_private_key_label(item))
-
-            elif (isinstance(item, rsa.RSAPublicKey) or
-                  isinstance(item, dsa.DSAPublicKey) or
-                  isinstance(item, ec.EllipticCurvePublicKey)):
-                subgraph.node(str(id(item)), label=get_public_key_label(item))
+                pkey = item.get_privatekey()
+                if pkey is not None:
+                    pkey = pkey.to_cryptography_key()
+                    subgraph.node(str(id(pkey)), label=get_private_key_label(pkey))
+                    items.append(pkey)
+            elif isinstance(item, OpenSSL.crypto.PKCS7):
+                for cert in get_pkcs7_certificates(item):
+                    cert = openssl_to_cryptography_cert(cert)
+                    items.append(cert)
+                    subgraph.node(str(id(cert)), label=
+                                  cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
+            else:
+                items.append(item)
+                if isinstance(item, Certificate):
+                    subgraph.node(str(id(item)), label=
+                                  item.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value)
+                elif (isinstance(item, rsa.RSAPrivateKey) or
+                      isinstance(item, dsa.DSAPrivateKey) or
+                      isinstance(item, ec.EllipticCurvePrivateKey)):
+                    subgraph.node(str(id(item)), label=get_private_key_label(item))
+                elif (isinstance(item, rsa.RSAPublicKey) or
+                      isinstance(item, dsa.DSAPublicKey) or
+                      isinstance(item, ec.EllipticCurvePublicKey)):
+                    subgraph.node(str(id(item)), label=get_public_key_label(item))
 
         subgraph.graph_attr['label'] = '{}'.format(file)
         graph.subgraph(subgraph)
