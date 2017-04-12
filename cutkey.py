@@ -440,6 +440,36 @@ def find_cert_trees(item_mapping):
 
     return roots
 
+def get_private_key_label(pkey):
+    if isinstance(pkey, rsa.RSAPrivateKey):
+        return "RSA Private Key"
+    elif isinstance(pkey, dsa.DSAPrivateKey):
+        return "DSA Private Key"
+    elif isinstance(pkey, ec.EllipticCurvePrivateKey):
+        return "Elliptic Curve Private Key"
+    return None
+
+def get_public_key_label(pubkey):
+    if isinstance(pubkey, rsa.RSAPublicKey):
+        return "RSA Public Key"
+    elif isinstance(pubkey, dsa.DSAPublicKey):
+        return "DSA Public Key"
+    elif isinstance(pubkey, ec.EllipticCurvePublicKey):
+        return "Elliptic Curve Public Key"
+    return None
+
+# From http://matthiaseisen.com/articles/graphviz/
+def apply_styles(graph, styles):
+    graph.graph_attr.update(
+        ('graph' in styles and styles['graph']) or {}
+    )
+    graph.node_attr.update(
+        ('nodes' in styles and styles['nodes']) or {}
+    )
+    graph.edge_attr.update(
+        ('edges' in styles and styles['edges']) or {}
+    )
+    return graph
 
 def display_graph(args):
     from cryptography.x509.oid import NameOID
@@ -471,7 +501,7 @@ def display_graph(args):
             pkey = item.get_privatekey()
             if pkey is not None:
                 pkey = pkey.to_cryptography_key()
-                subgraph.node(str(id(pkey)), label="Private Key")
+                subgraph.node(str(id(pkey)), label=get_private_key_label(pkey))
                 items.append(pkey)
         elif isinstance(item, OpenSSL.crypto.PKCS7):
             for cert in get_pkcs7_certificates(item):
@@ -487,16 +517,14 @@ def display_graph(args):
             elif (isinstance(item, rsa.RSAPrivateKey) or
                   isinstance(item, dsa.DSAPrivateKey) or
                   isinstance(item, ec.EllipticCurvePrivateKey)):
-                subgraph.node(str(id(item)), label="Private Key")
+                subgraph.node(str(id(item)), label=get_private_key_label(item))
 
             elif (isinstance(item, rsa.RSAPublicKey) or
                   isinstance(item, dsa.DSAPublicKey) or
                   isinstance(item, ec.EllipticCurvePublicKey)):
-                subgraph.node(str(id(item)), label="Public Key")
+                subgraph.node(str(id(item)), label=get_public_key_label(item))
 
-        #FIXME: this is a hack
-        subgraph.body.append('label="{}"'.format(file))
-
+        subgraph.graph_attr['label'] = '{}'.format(file)
         graph.subgraph(subgraph)
 
     def is_same_public_key(pub1, pub2):
@@ -551,7 +579,29 @@ def display_graph(args):
         if (isinstance(item, Certificate) and
             isinstance(other, Certificate) and
             other.issuer == item.subject):
-            graph.edge(str(id(item)), str(id(other)))
+            graph.edge(str(id(item)), str(id(other)), label="Issued")
+
+    styles = {
+        'graph': {
+            'fontcolor': 'white',
+            'bgcolor': '#333333',
+        },
+        'nodes': {
+            'fontname': 'Helvetica',
+            'fontcolor': 'white',
+            'color': 'white',
+            'style': 'filled',
+            'fillcolor': '#006699',
+        },
+        'edges': {
+            'style': 'dashed',
+            'color': 'white',
+            'arrowhead': 'open',
+            'fontname': 'Courier',
+            'fontcolor': 'white',
+        }
+    }
+    graph = apply_styles(graph, styles)
 
     print(graph.source)
     graph.render('temp.gv', view=True)
