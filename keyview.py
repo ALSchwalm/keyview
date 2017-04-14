@@ -105,11 +105,29 @@ def display_rsa_private_key(privkey):
     print("prime2:")
     display_large_number(priv_nums.q)
 
+def display_ec_private_key(privkey, indent=""):
+    pubkey = privkey.public_key()
+    print(indent + "Elliptic Curve Private-Key ({} bit)".format(pubkey.curve.key_size))
+    pub_nums = pubkey.public_numbers()
+
+    print(indent + "priv:")
+    display_large_number(privkey.private_numbers().private_value, indent=indent+" "*4)
+    print(indent + "x:")
+    display_large_number(pub_nums.x, indent=indent+" "*4)
+    print(indent + "y:")
+    display_large_number(pub_nums.y, indent=indent+" "*4)
+
+    print(indent + "ASN1 OID: {}".format(pubkey.curve.name))
+
 def display_private_key(privkey):
     if isinstance(privkey, rsa.RSAPrivateKey):
         display_rsa_private_key(privkey)
-    else:
+    elif isinstance(privkey, dsa.DSAPrivateKey):
         display_dsa_private_key(privkey)
+    elif isinstance(privkey, ec.EllipticCurvePrivateKey):
+        display_ec_private_key(privkey)
+    else:
+        raise ValueError("Unknown private key type")
 
 def display_rsa_public_key(pubkey, indent=""):
     print(indent + "RSA Public-Key ({} bit)".format(pubkey.key_size))
