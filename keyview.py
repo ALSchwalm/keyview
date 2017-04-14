@@ -1,4 +1,4 @@
-"""CutKey
+"""keyview
 
 Usage:
   cutkey info <file>...
@@ -549,7 +549,7 @@ def display_graph(args):
                       isinstance(item, ec.EllipticCurvePublicKey)):
                     subgraph.node(str(id(item)), label=get_public_key_label(item))
 
-        subgraph.graph_attr['label'] = '{}'.format(file)
+        subgraph.graph_attr['label'] = file
         graph.subgraph(subgraph)
 
     def is_same_public_key(pub1, pub2):
@@ -588,17 +588,17 @@ def display_graph(args):
     for item, other in product(items, repeat=2):
         # Associated public and private keys
         if is_private_key_for_public_key(item, other):
-            graph.edge(str(id(item)), str(id(other)))
+            graph.edge(str(id(item)), str(id(other)), dir="none", style="dashed")
 
         # Associated certificate and public key
         elif (isinstance(item, Certificate) and
               is_same_public_key(item.public_key(), other)):
-            graph.edge(str(id(item)), str(id(other)))
+            graph.edge(str(id(item)), str(id(other)), dir="none", style="dashed")
 
         # Associated certificate and private key
         elif (isinstance(other, Certificate) and
               is_private_key_for_public_key(item, other.public_key())):
-            graph.edge(str(id(item)), str(id(other)))
+            graph.edge(str(id(item)), str(id(other)), dir="none", style="dashed")
 
         # Certs in the same chain
         if (isinstance(item, Certificate) and
@@ -610,6 +610,7 @@ def display_graph(args):
         'graph': {
             'fontcolor': 'white',
             'bgcolor': '#333333',
+            'color': 'grey'
         },
         'nodes': {
             'fontname': 'Helvetica',
@@ -619,7 +620,6 @@ def display_graph(args):
             'fillcolor': '#006699',
         },
         'edges': {
-            'style': 'dashed',
             'color': 'white',
             'arrowhead': 'open',
             'fontname': 'Courier',
@@ -633,7 +633,7 @@ def display_graph(args):
 
 
 def main():
-    arguments = docopt(__doc__, version='CutKey')
+    arguments = docopt(__doc__, version='Keyview')
 
     if arguments["info"] is True:
         display_info(arguments)
