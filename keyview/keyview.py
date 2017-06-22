@@ -180,18 +180,26 @@ def display_public_key(pubkey, indent=""):
     else:
         raise ValueError("Unknown public key type")
 
-def rdns_to_string(rdns):
+def rdns_to_string(rdns, join_with=", "):
     parts = []
     for attr in rdns:
         parts.append("{}={}".format(get_oid_name(attr.oid.dotted_string),
                                     attr.value))
-    return ", ".join(parts)
+    return join_with.join(parts)
 
 def extension_description(extension):
     return get_oid_name(extension.oid.dotted_string)
 
 def extended_key_usage_description(usage):
     return get_oid_name(usage.dotted_string)
+
+def format_subject_alt_name(name):
+    if isinstance(name, DNSName):
+        return "DNS:{}".format(name.value)
+    elif isinstance(name, DirectoryName):
+        return "DirName:/{}".format(rdns_to_string(name.value, join_with="/"))
+    else:
+        return name.value
 
 def format_extension_value(value):
     if isinstance(value, ExtendedKeyUsage):
@@ -220,8 +228,7 @@ def format_extension_value(value):
         return usages
 
     elif isinstance(value, SubjectAlternativeName):
-        #TODO: Add 'DNS' prefix, etc.
-        return [", ".join(name.value for name in value)]
+        return [format_subject_alt_name(name) for name in value]
 
     elif isinstance(value, AuthorityInformationAccess):
         descriptions = []
