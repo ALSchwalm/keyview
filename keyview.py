@@ -61,6 +61,8 @@ def parse_objects_txt_file(path):
 oid_map = parse_objects_txt_file("objects.txt")
 
 def get_oid_name(oid):
+    if oid not in oid_map:
+        return oid
     return oid_map[oid][1]
 
 def display_large_number(num, indent="    "):
@@ -250,6 +252,9 @@ def format_extension_value(value):
                 points.append("  " + rdns_to_string(point.relative_name))
         return points
 
+    elif isinstance(value, UnrecognizedExtension):
+        return [repr(value.value)]
+
     raise ValueError("Unknown Value (This is a bug, please report it)")
 
 def display_x509_cert(cert):
@@ -340,7 +345,7 @@ def display_pkcs12(bundle):
         pkey = pkey.to_cryptography_key()
         display_private_key(pkey)
 
-def display_item_info(item, print_filename=False):
+def display_item_info(item, filename, print_filename=False):
     if print_filename is True:
         print("#######[ {} ]#######".format(filename))
 
@@ -449,7 +454,7 @@ def display_info(args):
     for file in args["<file>"]:
         items = load_file(file)
         for item in items:
-            display_item_info(item, print_filename=len(args["<file>"]) > 1)
+            display_item_info(item, file, print_filename=len(args["<file>"]) > 1)
 
 def find_cert_trees(item_mapping):
     certs = set([])
