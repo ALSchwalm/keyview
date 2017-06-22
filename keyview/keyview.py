@@ -11,18 +11,18 @@ Options:
   --version     Show version.
 
 """
+import pkgutil
 
 import cryptography.hazmat.primitives.serialization
 import cryptography.hazmat.backends
 from cryptography.x509 import *
 from cryptography.hazmat.primitives.asymmetric import dsa, rsa, ec
 
-import traceback
 import OpenSSL
 from docopt import docopt
 
-def parse_objects_txt_file(path):
-    file = open(path, "r")
+
+def parse_objects_txt(contents):
     mapping = {}
 
     def expand_short_id(shorthand):
@@ -36,7 +36,7 @@ def parse_objects_txt_file(path):
                     return oid
         return None
 
-    for line in file.readlines():
+    for line in contents.split("\n"):
         if line.startswith("!") or line.startswith("#") or len(line.strip()) == 0:
             continue
         parts = [p.strip() for p in line.split(":")]
@@ -58,7 +58,13 @@ def parse_objects_txt_file(path):
             mapping[id] = [parts[1], parts[2]]
     return mapping
 
-oid_map = parse_objects_txt_file("objects.txt")
+def try_load_pkg_data(name):
+    try:
+        return pkgutil.get_data(__name__, name)
+    except ValueError:
+        return open(name, "rb").read()
+
+oid_map = parse_objects_txt(try_load_pkg_data("objects.txt").decode("utf-8"))
 
 def get_oid_name(oid):
     if oid not in oid_map:
