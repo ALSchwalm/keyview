@@ -20,7 +20,7 @@ key/certificate forms. Just throw some files at `keyview` and let it do the work
 Installation
 ------------
 
-Just install with `python setup.py`, and you will be able to run `keyview` from the
+Just install with `python setup.py install`, and you will be able to run `keyview` from the
 command line. `keyview` requires python 3+.
 
 Usage
