@@ -24,7 +24,8 @@ setup(
     install_requires=[
         "cryptography",
         "pyopenssl",
-        "docopt"
+        "docopt",
+        "graphviz"
     ],
     include_package_data=True,
     package_data={

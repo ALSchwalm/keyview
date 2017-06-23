@@ -2,14 +2,14 @@
 
 Usage:
   cutkey info <file>...
-  cutkey graph <file>...
+  cutkey graph [--output=<name>] <file>...
   cutkey (-h | --help)
   cutkey --version
 
 Options:
-  -h --help     Show this screen.
-  --version     Show version.
-
+  -h --help            Show this screen.
+  --version            Show version.
+  --output=<name>      Set the name of the generated file
 """
 import pkgutil
 
@@ -665,7 +665,11 @@ def display_graph(args):
     graph = apply_styles(graph, styles)
 
     print(graph.source)
-    graph.render('temp.gv', view=True)
+    if args["--output"]:
+        graphname = args["--output"]
+    else:
+        graphname = "certgraph.gv"
+    graph.render(graphname, view=True)
 
 
 def main():
